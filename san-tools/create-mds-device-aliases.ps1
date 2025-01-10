@@ -36,7 +36,7 @@ try {
     }
     Write-Verbose "Credentials Stored"
     Write-Verbose "Attempting to connect to array"
-    $pfa = New-PfaArray -EndPoint $FlashArray -Credentials $credentials -HttpTimeOutInMilliSeconds 120000
+    $pfa = New-PfaArray -EndPoint $FlashArray -Credentials $credentials -HttpTimeOutInMilliSeconds 120000 -IgnoreCertificateError
     Write-Verbose "Connected to array"
 }
 catch {
