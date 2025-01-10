@@ -1,4 +1,4 @@
-#Requires -Modules PureStoragePowerShellSDK
+#Requires -Modules PureStoragePowerShellSDK2
 
 <#
     .SYNOPSIS
@@ -11,10 +11,6 @@
     .PARAMETER FlashArray
     FQDN of the Pure Storage FlashArray device to connect to.
 
-    .PARAMETER AllPorts
-    Using this switch will have the script return all ports regardless of their
-    link state.
-
     .EXAMPLE
     .\Get-PureDeviceAlias.ps1 -FlashArray flasharray.domain.lcl
 
@@ -23,8 +19,7 @@
 #>
 param(
     [parameter(Mandatory = $true)]
-    [string]$FlashArray,
-    [switch]$AllPorts
+    [string]$FlashArray
 )
 
 # Attempt to connect to the FlashArray
@@ -36,53 +31,56 @@ try {
     }
     Write-Verbose "Credentials Stored"
     Write-Verbose "Attempting to connect to array"
-    $pfa = New-PfaArray -EndPoint $FlashArray -Credentials $credentials -HttpTimeOutInMilliSeconds 120000 -IgnoreCertificateError
+    $pfa = Connect-Pfa2Array -Endpoint $FlashArray -Credential $credentials -IgnoreCertificateError
     Write-Verbose "Connected to array"
+	
+    # Obtain the array name
+    $PFAName = (Get-Pfa2Array -Array $pfa).name.toUpper()
 }
 catch {
     throw $_
 }
 
-# Get the array hostname
-$PFAName = (Get-PfaArrayAttributes -Array $pfa).array_name
-
-# Gather the HBA WWPN's off the FlashArray.
-# If user passed -allports parameter obtain all of the ports regardless of state
-# Otherwise, only grab ports reporting connected
-$PFAPorts = if ($AllPorts) {
-    Write-Verbose " Obtaining all PFA Ports"
-    Get-PfaArrayPorts -Array $Pfa
-}
-else {
-    Write-Verbose " Obtaining online PFA Ports"
-    Get-PfaArrayPorts -Array $Pfa | ForEach-Object -Process {
-        if ((Get-PfaHardwareAttributes -Array $pfa -Name $_.Name).speed -gt 0) {
-            return $_
-        }
+# Obtain all of the FA target FC ports
+# Note: ideally we would use '-filter "target.wwn"' which would only return FC ports. However, as of 6.8.2 this is bugged. If a FC port is down the array will simply not include it in the returned port list. Not ideal. For now, have to use PowerShell object filtering.
+#$output = Get-Pfa2Port -array $pfa -filter "target.wwn" | ForEach-Object -Process {
+$output = Get-Pfa2Port -Array $pfa | Where-Object { $_.Wwn } | ForEach-Object -Process {
+    #    $wwn = $_.wwn
+    [PSCustomObject]@{
+        Name   = $_.Name.replace('.', '-')
+        WWPN   = $_.Wwn #(0..7 | ForEach-Object { $wwn.Substring($_ * 2, 2) }) -join ':'
+        # Here we divide the last number of the interface name by 2. If it's evenly divisible then it's an A side port. Otherwise it's B side.
+        Fabric = $(if ($_.name.substring($_.name.length - 1) % 2 -eq 0 ) { "A" } else { "B" })
     }
-}
+} | Group-Object -Property Fabric
 
-# Obtain the "A" side ports (Even number FC ports)
-Write-Host -ForegroundColor Red "A-Fabric Ports"
-$PFAPorts | Where-Object { $_.name.substring($_.name.length - 1) % 2 -eq 0 } | ForEach-Object -Process {
-    $wwn = $_.wwn
-    $Port = @{
-        Name = $_.Name
-        WWPN = (0..7 | ForEach-Object { $wwn.Substring($_ * 2, 2) }) -join ':'
-    }
-    Write-Host "device-alias name $($PFAName.toUpper())_$(($Port.Name).replace('.','-')) pwwn $($Port.WWPN)"
-}
-Write-Host ""
-
-# Obtain the "B" side ports (Odd number FC ports)
-Write-Host -ForegroundColor Red "B-Fabric Ports"
-$PFAPorts | Where-Object { $_.name.substring($_.name.length - 1) % 2 -eq 1 } | ForEach-Object -Process {
-    $wwn = $_.wwn
-    $Port = @{
-        Name = $_.Name
-        WWPN = (0..7 | ForEach-Object { $wwn.Substring($_ * 2, 2) }) -join ':'
-    }
-    Write-Host "device-alias name $($PFAName.toUpper())_$(($Port.Name).replace('.','-')) pwwn $($Port.WWPN)"
-}
 # Disconnect from the array
-Disconnect-PfaArray -Array $Pfa
+Disconnect-Pfa2Array -Array $Pfa
+
+Write-Host -ForegroundColor Yellow -Message "$($PFAName) FC Interfaces: Device Alias Entries"
+
+# Iterate over the results to generate the device-alias commands and output to the console
+$output | ForEach-Object -Process {
+    Write-Host -ForegroundColor Red "Fabric $($_.Name) Device-Alias Entries"
+    Write-Host -ForegroundColor Red "--------------------------------------"
+    $_.group | ForEach-Object -Process {
+        Write-Host "device-alias name $($PFANAME)_$($_.name) pwwn $($_.WWPN)"
+    }
+    Write-Host ""
+	
+    Write-Host -ForegroundColor Red "Fabric $($_.Name) Zone Member Entries"
+    Write-Host -ForegroundColor Red "--------------------------------------"
+    $_.group | ForEach-Object -Process {
+        Write-Host "member device-alias $($PFANAME)_$($_.name) target"
+    }
+    Write-Host ""
+}
+
+Write-Host -ForegroundColor Yellow -Message "INSTRUCTIONS:"
+Write-Host "Log on to the MDS switch for the corresponding fabric via SSH."
+Write-Host "Enter configuration mode: config t"
+Write-Host "Enter the device-alias database: device-alias database"
+Write-Host "Paste in the device-alias lines for the respective fabric above."
+Write-Host "Review the device-alias database changes: device-alias pending-diff"
+Write-Host "Commit the device-alias database changes: device-alias commit"
+Write-Host "Optionally you can use the output for the member section to paste into a zoneset using Smart Zoning."
