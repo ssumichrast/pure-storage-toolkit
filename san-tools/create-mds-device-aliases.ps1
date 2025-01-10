@@ -45,10 +45,9 @@ catch {
 # Note: ideally we would use '-filter "target.wwn"' which would only return FC ports. However, as of 6.8.2 this is bugged. If a FC port is down the array will simply not include it in the returned port list. Not ideal. For now, have to use PowerShell object filtering.
 #$output = Get-Pfa2Port -array $pfa -filter "target.wwn" | ForEach-Object -Process {
 $output = Get-Pfa2Port -Array $pfa | Where-Object { $_.Wwn } | ForEach-Object -Process {
-    #    $wwn = $_.wwn
     [PSCustomObject]@{
         Name   = $_.Name.replace('.', '-')
-        WWPN   = $_.Wwn #(0..7 | ForEach-Object { $wwn.Substring($_ * 2, 2) }) -join ':'
+        WWPN   = $_.Wwn
         # Here we divide the last number of the interface name by 2. If it's evenly divisible then it's an A side port. Otherwise it's B side.
         Fabric = $(if ($_.name.substring($_.name.length - 1) % 2 -eq 0 ) { "A" } else { "B" })
     }
