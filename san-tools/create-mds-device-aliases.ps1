@@ -12,7 +12,7 @@
     FQDN of the Pure Storage FlashArray device to connect to.
 
     .EXAMPLE
-    .\Get-PureDeviceAlias.ps1 -FlashArray flasharray.domain.lcl
+    .\create-mds-device-aliases.ps1 -FlashArray flasharray.domain.lcl
 
     .NOTES
     Author: Steven Sumichrast <steven.sumichrast@gmail.com>
