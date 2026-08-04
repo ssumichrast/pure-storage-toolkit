@@ -1,0 +1,35 @@
+# Python virtual environments
+.venv/
+venv/
+env/
+ENV/
+pyvenv.cfg
+bin/
+include/
+lib/
+lib64/
+share/
+pip-selfcheck.json
+
+# Python bytecode / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# Local environment / secrets
+.env
+*.env
+!*.env.example
+
+# Generated reports / output
+reports/
+*.report.json
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
