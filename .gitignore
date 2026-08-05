@@ -1,14 +1,14 @@
 # Python virtual environments
+# pyvenv.cfg is the definitive venv marker; the rest are the conventional
+# directory names. Bare bin/ include/ lib/ lib64/ share/ are deliberately NOT
+# listed -- gitignore patterns without a slash match at every depth, so those
+# would silently swallow a real bin/ or lib/ directory belonging to a tool.
+# Create venvs as .venv/ (see each tool's README) and they stay ignored.
 .venv/
 venv/
 env/
 ENV/
 pyvenv.cfg
-bin/
-include/
-lib/
-lib64/
-share/
 pip-selfcheck.json
 
 # Python bytecode / caches
