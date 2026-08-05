@@ -44,7 +44,7 @@ cd pure-storage-toolkit/file-and-object-tools/flashblade-inactive-fs-and-objects
 python3 -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
 
-pip install py-pure-client
+pip install -r requirements.txt
 ```
 
 ## Configuration

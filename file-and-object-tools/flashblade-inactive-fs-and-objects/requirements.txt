@@ -1,0 +1,9 @@
+# FlashBlade Inactive File Shares & Objects Report
+#
+# Install with:
+#   pip install -r requirements.txt
+#
+# Everything else the script uses (argparse, json, os, sys, datetime, pathlib)
+# is in the Python standard library.
+
+py-pure-client>=1.93.0
