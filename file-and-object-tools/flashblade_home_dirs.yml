@@ -1,0 +1,177 @@
+---
+# Create a home directory on a FlashBlade for each user in home_users.
+# Per user: one file system, one NFS export (<home_export_prefix><user>), and a
+# QoS policy attached to the file system. Nothing else is created.
+#
+#   ansible-playbook flashblade_home_dirs.yml -e @vars/home_users.yml
+#
+# The array address (fb_url) is in vars/configvalues.yml. The API token comes
+# from vars/credentials.yml (copy vars/credentials.example.yml; the file is
+# git-ignored). Nothing needs to be exported in the shell.
+#
+# Site settings (prefix, export policy, default QoS policy, size) are in
+# vars/configvalues.yml. Users can also be passed on the command line:
+#   ansible-playbook flashblade_home_dirs.yml -e '{"home_users": ["alice", "bob"]}'
+#
+# Safe to re-run: anything that already exists is left alone.
+#
+# This uses the FlashBlade REST API directly (ansible.builtin.uri) rather than
+# the everpure.flashblade collection, because the collection cannot (a) create a
+# file system without the array's default exports, or (b) attach a QoS policy
+# to a file system.
+
+- name: Create FlashBlade home directories
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars_files:
+    - vars/configvalues.yml
+    - vars/credentials.yml   # fb_api_token; see credentials.example.yml
+
+  vars:
+    fb_validate_certs: false
+    home_export_prefix: ""   # overridden in vars/configvalues.yml
+    home_realm: ""           # overridden in vars/configvalues.yml; "" = no realm
+    # REST API version. 2.24 shipped in Purity//FB 4.7.x; do not use newer calls
+    # than this so the playbook keeps working on 4.7.x arrays.
+    fb_rest_version: "2.24"
+
+    home_users: []   # plain names, or {name:, qos_policy:, size_gib:, realm:}; see vars/home_users.example.yml
+
+    fb_api: "https://{{ fb_url }}/api/{{ fb_rest_version }}"
+
+    # Every realm the users will go in, so a missing one fails before anything is created.
+    realm_servers: {}
+    wanted_realms: >-
+      {{ (home_users | select('mapping') | selectattr('realm', 'defined') | map(attribute='realm') | list
+          + [home_realm]) | select | unique | list }}
+
+  tasks:
+    - name: Check inputs
+      ansible.builtin.assert:
+        that:
+          - fb_url != ""
+          - fb_api_token != ""
+          - home_export_policy != ""
+          - home_qos_policy != ""
+          - home_users | length > 0
+        fail_msg: >-
+          Set fb_url, home_export_policy and home_qos_policy in
+          vars/configvalues.yml, set fb_api_token in vars/credentials.yml,
+          and pass home_users.
+
+    - name: Log in to the FlashBlade REST API
+      ansible.builtin.uri:
+        url: "https://{{ fb_url }}/api/login"
+        method: POST
+        headers:
+          api-token: "{{ fb_api_token }}"
+        validate_certs: "{{ fb_validate_certs }}"
+      register: login
+      no_log: true
+
+    - name: Look up realms on the array
+      ansible.builtin.uri:
+        url: "{{ fb_api }}/realms"
+        headers:
+          x-auth-token: "{{ login.x_auth_token }}"
+        validate_certs: "{{ fb_validate_certs }}"
+      register: realm_lookup
+      changed_when: false
+      when: wanted_realms | length > 0
+
+    - name: Check that every requested realm exists
+      ansible.builtin.assert:
+        that: wanted_realms | difference(realm_lookup.json['items'] | map(attribute='name') | list) | length == 0
+        fail_msg: >-
+          Realm(s) not found on the array: {{
+          wanted_realms | difference(realm_lookup.json['items'] | map(attribute='name') | list) | join(', ') }}
+      when: wanted_realms | length > 0
+
+    # An export can only be made on a server in the same realm as the file
+    # system, so find the server each requested realm has.
+    - name: Look up servers
+      ansible.builtin.uri:
+        url: "{{ fb_api }}/servers"
+        headers:
+          x-auth-token: "{{ login.x_auth_token }}"
+        validate_certs: "{{ fb_validate_certs }}"
+      register: server_lookup
+      changed_when: false
+      when: wanted_realms | length > 0
+
+    - name: Work out the server for each realm
+      ansible.builtin.set_fact:
+        realm_servers: "{{ servers_by_realm | from_json }}"
+      vars:
+        servers_by_realm: >-
+          {%- set ns = namespace(d={}) -%}
+          {%- for s in server_lookup.json['items'] -%}
+          {%- for r in s.realms | default([]) -%}
+          {%- set _ = ns.d.update({r.name: ns.d.get(r.name, []) + [s.name]}) -%}
+          {%- endfor -%}
+          {%- endfor -%}
+          {{ ns.d | to_json }}
+      when: wanted_realms | length > 0
+
+    - name: Check each realm has exactly one server
+      ansible.builtin.assert:
+        that: (realm_servers[item] | default([])) | length == 1
+        fail_msg: >-
+          Realm {{ item }} needs exactly one server for its NFS exports; found
+          {{ realm_servers[item] | default([]) | length }}
+          ({{ realm_servers[item] | default([]) | join(', ') }}).
+        quiet: true
+      loop: "{{ wanted_realms }}"
+      when: wanted_realms | length > 0
+
+    - name: Look up NFS export policies
+      ansible.builtin.uri:
+        url: "{{ fb_api }}/nfs-export-policies"
+        headers:
+          x-auth-token: "{{ login.x_auth_token }}"
+        validate_certs: "{{ fb_validate_certs }}"
+      register: policy_lookup
+      changed_when: false
+      when: wanted_realms | length > 0
+
+    # A file system in a realm needs an export policy in that realm.
+    - name: Check each realm has the export policy
+      ansible.builtin.assert:
+        that: (item ~ '::' ~ home_export_policy) in (policy_lookup.json['items'] | map(attribute='name') | list)
+        fail_msg: >-
+          Export policy {{ item }}::{{ home_export_policy }} not found. A realm
+          needs its own copy of the export policy named in home_export_policy.
+        quiet: true
+      loop: "{{ wanted_realms }}"
+      when: wanted_realms | length > 0
+
+    - name: Look up QoS policies
+      ansible.builtin.uri:
+        url: "{{ fb_api }}/qos-policies"
+        headers:
+          x-auth-token: "{{ login.x_auth_token }}"
+        validate_certs: "{{ fb_validate_certs }}"
+      register: qos_policy_lookup
+      changed_when: false
+      when: wanted_realms | length > 0
+
+    # Likewise a QoS policy in the realm. Only the default policy is checked
+    # here; a per-user qos_policy override is checked by the array on create.
+    - name: Check each realm has the default QoS policy
+      ansible.builtin.assert:
+        that: (item ~ '::' ~ home_qos_policy) in (qos_policy_lookup.json['items'] | map(attribute='name') | list)
+        fail_msg: >-
+          QoS policy {{ item }}::{{ home_qos_policy }} not found. A realm needs
+          its own copy of the QoS policy named in home_qos_policy.
+        quiet: true
+      loop: "{{ wanted_realms }}"
+      when: wanted_realms | length > 0
+
+    - name: Create each home directory
+      ansible.builtin.include_tasks: home_dir.yml
+      loop: "{{ home_users }}"
+      loop_control:
+        loop_var: user
+        label: "{{ user.name | default(user) }}"

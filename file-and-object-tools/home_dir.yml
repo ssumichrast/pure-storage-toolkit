@@ -1,0 +1,96 @@
+---
+# Tasks for one user. Included by flashblade_home_dirs.yml with `user` set,
+# either a plain name or {name: ..., qos_policy: ..., size_gib: ..., realm: ...}.
+
+- name: Work out names for {{ user.name | default(user) }}
+  ansible.builtin.set_fact:
+    # FlashBlade file system names can't contain ".", so it becomes "-".
+    username: "{{ (user.name if user is mapping else user) | lower | replace('.', '-') }}"
+    base_qos_policy: "{{ (user.qos_policy | default(home_qos_policy)) if user is mapping else home_qos_policy }}"
+    size_gib: "{{ (user.size_gib | default(home_fs_size_gib)) if user is mapping else home_fs_size_gib }}"
+    realm: "{{ (user.realm | default(home_realm)) if user is mapping else home_realm }}"
+
+- name: Set file system name and request headers
+  ansible.builtin.set_fact:
+    # A file system in a realm is named <realm>::<name>; that qualified name is
+    # what the look-ups and the export and QoS calls below use.
+    # A realm file system also needs a QoS policy from the same realm.
+    qos_policy: "{{ (realm ~ '::' ~ base_qos_policy) if realm else base_qos_policy }}"
+    fs_name: "{{ (realm ~ '::' if realm else '') ~ home_fs_prefix ~ username }}"
+    export_name: "{{ home_export_prefix }}{{ username }}"
+    # Exports must be on a server in the file system's realm.
+    export_server: "{{ realm_servers[realm][0] if realm else '_array_server' }}"
+    # ...and use an export policy from that realm: <realm>::<home_export_policy>.
+    export_policy: "{{ (realm ~ '::' ~ home_export_policy) if realm else home_export_policy }}"
+    api_headers:
+      x-auth-token: "{{ login.x_auth_token }}"
+      Content-Type: application/json
+
+# --- File system -----------------------------------------------------------
+
+- name: Look up file system {{ fs_name }}
+  ansible.builtin.uri:
+    url: "{{ fb_api }}/file-systems?filter=name='{{ fs_name }}'"
+    headers: "{{ api_headers }}"
+    validate_certs: "{{ fb_validate_certs }}"
+  register: fs_lookup
+  changed_when: false
+
+# default_exports='' stops the array adding an export we did not ask for.
+- name: Create file system {{ fs_name }}
+  ansible.builtin.uri:
+    url: "{{ fb_api }}/file-systems?names={{ fs_name }}&default_exports=''"
+    method: POST
+    headers: "{{ api_headers }}"
+    body_format: json
+    body:
+      provisioned: "{{ size_gib | int * 1024 * 1024 * 1024 }}"
+      nfs:
+        v3_enabled: true
+        v4_1_enabled: true
+    validate_certs: "{{ fb_validate_certs }}"
+  when: fs_lookup.json['items'] | length == 0
+  changed_when: true
+
+# --- NFS export ------------------------------------------------------------
+
+- name: Look up exports on {{ fs_name }}
+  ansible.builtin.uri:
+    url: "{{ fb_api }}/file-system-exports?filter=member.name='{{ fs_name }}'"
+    headers: "{{ api_headers }}"
+    validate_certs: "{{ fb_validate_certs }}"
+  register: export_lookup
+  changed_when: false
+
+- name: Create NFS export {{ export_name }}
+  ansible.builtin.uri:
+    url: "{{ fb_api }}/file-system-exports?member_names={{ fs_name }}&policy_names={{ export_policy }}"
+    method: POST
+    headers: "{{ api_headers }}"
+    body_format: json
+    body:
+      export_name: "{{ export_name }}"
+      server:
+        name: "{{ export_server }}"
+    validate_certs: "{{ fb_validate_certs }}"
+  when: export_lookup.json['items'] | selectattr('policy_type', 'eq', 'NFS') | list | length == 0
+  changed_when: true
+
+# --- QoS policy ------------------------------------------------------------
+
+- name: Look up QoS policy members
+  ansible.builtin.uri:
+    url: "{{ fb_api }}/qos-policies/members?policy_names={{ qos_policy }}&member_names={{ fs_name }}"
+    headers: "{{ api_headers }}"
+    validate_certs: "{{ fb_validate_certs }}"
+  register: qos_lookup
+  changed_when: false
+
+- name: Attach QoS policy {{ qos_policy }}
+  ansible.builtin.uri:
+    url: "{{ fb_api }}/qos-policies/members?policy_names={{ qos_policy }}&member_names={{ fs_name }}&member_types=file-systems"
+    method: POST
+    headers: "{{ api_headers }}"
+    validate_certs: "{{ fb_validate_certs }}"
+  when: qos_lookup.json['items'] | length == 0
+  changed_when: true

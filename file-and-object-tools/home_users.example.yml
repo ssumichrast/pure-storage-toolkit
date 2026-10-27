@@ -1,0 +1,22 @@
+---
+# Copy to vars/home_users.yml and edit.
+#
+# Each entry is either a plain username, which gets the default QoS policy and
+# size from configvalues.yml, or a name with any of these overrides:
+#   qos_policy: QoS policy to use instead of the default
+#   size_gib:   file system size in GiB instead of the default
+#   realm:      realm to create the file system in instead of home_realm
+# These apply when the file system is created; an existing file system is not
+# resized, re-QoS'd or moved to another realm.
+home_users:
+  - alice
+  - bob
+  - name: carol
+    qos_policy: gold-qos
+  - name: dave
+    size_gib: 2048
+  - name: erin
+    qos_policy: gold-qos
+    size_gib: 500
+  - name: frank
+    realm: engineering

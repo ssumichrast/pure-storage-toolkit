@@ -1,0 +1,32 @@
+---
+# Site settings. Copy to vars/configvalues.yml and edit for your array.
+# Anything here can also be overridden on the command line with -e name=value.
+# The API token is separate: see vars/credentials.example.yml.
+
+# FlashBlade management address or FQDN (no https://).
+fb_url: "flashblade.example.com"
+
+# Prefix for each user's file system: <prefix><username>
+# Letters, digits, "_" and "-" are allowed, e.g. "home-", "home_", "h_".
+home_fs_prefix: "home-"
+
+# Prefix for each user's NFS export name: <prefix><username>
+# Same character rules as the file system prefix, plus export names cannot
+# contain "/" or any of \ [ ] : | < > + = ; , * ?  Use "" for no prefix.
+home_export_prefix: "home-"
+
+# Realm to put every user's file system in. The realm must already exist.
+# Leave "" for no realm. A user can override it with a realm: key (see
+# vars/home_users.example.yml). Applies at creation only; existing file
+# systems are not moved.
+home_realm: ""
+
+# NFS export policy that already exists on the FlashBlade.
+home_export_policy: simple-nfs
+
+# QoS policy given to every user, unless that user overrides it (see
+# vars/home_users.example.yml). Must already exist on the FlashBlade.
+home_qos_policy: home-directory-qos
+
+# Size of each file system in GiB (thin provisioned).
+home_fs_size_gib: 1024
